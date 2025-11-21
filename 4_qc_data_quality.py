@@ -1,10 +1,15 @@
 
 """
 Data Quality Check Script
-Version: 1.0
-Date: 2025-10-31
+Version: 1.1
+Date: 2025-11-21
 
 This script validates merged clean data against QC criteria.
+
+Version 1.1 Updates:
+- Added "Week #" column based on DATE_OUT (ISO 8601 week numbering)
+- Week format: YY-WXX (e.g., 24-W15 for week 15 of 2024)
+- Shows "N/A" for blank/invalid dates
 """
 
 import pandas as pd
@@ -232,6 +237,48 @@ def validate_data(df, criteria_dict, phase_map):
     return issues_by_cell
 
 
+def add_week_number_column(df):
+    """
+    Add Week # column based on DATE_OUT.
+    Format: YY-WXX (e.g., 24-W15)
+    Uses ISO 8601 week numbering (Monday-Sunday weeks).
+    Shows "N/A" for blank/invalid dates.
+    """
+    print(f"\nAdding Week # column based on DATE_OUT...")
+
+    week_numbers = []
+
+    for idx, row in df.iterrows():
+        date_out = row.get('DATE_OUT')
+
+        # Check if DATE_OUT is blank or invalid
+        if pd.isna(date_out):
+            week_numbers.append("N/A")
+        else:
+            try:
+                # Convert to datetime if not already
+                date_obj = pd.to_datetime(date_out)
+
+                # Get ISO week number and year
+                iso_calendar = date_obj.isocalendar()
+                year = iso_calendar[0]  # ISO year
+                week = iso_calendar[1]  # ISO week number
+
+                # Format as YY-WXX (e.g., 24-W15)
+                year_short = year % 100  # Last 2 digits
+                week_str = f"{year_short:02d}-W{week:02d}"
+                week_numbers.append(week_str)
+
+            except (ValueError, TypeError, AttributeError):
+                # If conversion fails, use N/A
+                week_numbers.append("N/A")
+
+    df["Week #"] = week_numbers
+
+    valid_weeks = sum(1 for w in week_numbers if w != "N/A")
+    print(f"Week # column added: {valid_weeks} valid week numbers, {len(week_numbers) - valid_weeks} N/A values")
+
+
 def apply_qc_flag(df, issues_by_cell):
     """Add QC_FLAG column: 1 if row has issues, 0 if clean."""
     qc_flags = []
@@ -301,6 +348,9 @@ def main():
 
         # Validate data
         issues_by_cell = validate_data(df, criteria_dict, phase_map)
+
+        # Add Week # column (based on DATE_OUT)
+        add_week_number_column(df)
 
         # Add QC_FLAG column
         apply_qc_flag(df, issues_by_cell)

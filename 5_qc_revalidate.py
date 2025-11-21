@@ -1,7 +1,7 @@
 """
 QC Re-Validation Script
-Version: 2.2
-Date: 2025-11-04
+Version: 2.3
+Date: 2025-11-21
 
 This script re-validates a QC file after manual corrections have been made.
 It respects manual changes in two ways:
@@ -9,6 +9,10 @@ It respects manual changes in two ways:
 2. If you manually removed yellow highlighting, it stays removed (considers it QC'd)
 
 IMPORTANT: This script creates a NEW _REVALIDATED file (keeps original intact)
+
+Version 2.3 Updates:
+- Preserves "Week #" column (auto-generated if missing)
+- Week format: YY-WXX (e.g., 24-W15) based on DATE_OUT
 
 Usage:
 1. Open MERGE_CLEAN_QC_*.xlsx file (or previous _REVALIDATED file)
@@ -203,6 +207,53 @@ def filter_issues_by_manual_qc(issues_by_cell, non_yellow_cells):
     return filtered_issues
 
 
+def add_week_number_column(df):
+    """
+    Add Week # column based on DATE_OUT if it doesn't exist.
+    Format: YY-WXX (e.g., 24-W15)
+    Uses ISO 8601 week numbering (Monday-Sunday weeks).
+    Shows "N/A" for blank/invalid dates.
+    """
+    # Check if Week # column already exists
+    if "Week #" in df.columns:
+        print(f"\nWeek # column already exists, preserving existing values...")
+        return
+
+    print(f"\nAdding Week # column based on DATE_OUT...")
+
+    week_numbers = []
+
+    for idx, row in df.iterrows():
+        date_out = row.get('DATE_OUT')
+
+        # Check if DATE_OUT is blank or invalid
+        if pd.isna(date_out):
+            week_numbers.append("N/A")
+        else:
+            try:
+                # Convert to datetime if not already
+                date_obj = pd.to_datetime(date_out)
+
+                # Get ISO week number and year
+                iso_calendar = date_obj.isocalendar()
+                year = iso_calendar[0]  # ISO year
+                week = iso_calendar[1]  # ISO week number
+
+                # Format as YY-WXX (e.g., 24-W15)
+                year_short = year % 100  # Last 2 digits
+                week_str = f"{year_short:02d}-W{week:02d}"
+                week_numbers.append(week_str)
+
+            except (ValueError, TypeError, AttributeError):
+                # If conversion fails, use N/A
+                week_numbers.append("N/A")
+
+    df["Week #"] = week_numbers
+
+    valid_weeks = sum(1 for w in week_numbers if w != "N/A")
+    print(f"Week # column added: {valid_weeks} valid week numbers, {len(week_numbers) - valid_weeks} N/A values")
+
+
 def update_qc_flag(df, issues_by_cell):
     """Update QC_FLAG column: 1 if row has issues, 0 if clean."""
     qc_flags = []
@@ -337,6 +388,9 @@ def main():
         # Filter out issues for cells that user has manually QC'd
         # This is KEY: respects both manual edits and manual highlight removal
         issues_by_cell = filter_issues_by_manual_qc(raw_issues, non_yellow_cells)
+
+        # Add Week # column if it doesn't exist (preserves if already present)
+        add_week_number_column(df)
 
         # Update QC_FLAG based on filtered issues
         rows_cleaned, rows_with_issues = update_qc_flag(df, issues_by_cell)
