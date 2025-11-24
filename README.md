@@ -239,7 +239,53 @@ re
 
 ---
 
+## Continuous Workflow (Scripts 6-7)
+
+For ongoing operations after initial setup, use the **continuous workflow** to add new runs:
+
+### **6_update_master_with_revalidated.py**
+Merges existing MASTER with new REVALIDATED runs.
+
+**Input:**
+- MASTER_REVALIDATED file (from previous cycle)
+- New REVALIDATED file (processed through Scripts 1-5)
+
+**Output:** `MERGE_CLEAN_QC_MASTER_[timestamp].xlsx`
+
+**Features:**
+- Automatic duplicate detection (JOB_NUM + SN + DRILLING_HOURS)
+- Source priority handling
+- CAM_Run_Tracker replaces POG_CAM_Usage when matching
+- Adds 4 special columns: REASON_POOH_QC, SERIES 20, CONTROL #, QC BY
+- CONTROL # continues incrementing across cycles
+- Preserves all formatting/highlighting
+
+### **7_revalidate_master.py**
+Re-validates merged MASTER file.
+
+**Input:** `MERGE_CLEAN_QC_MASTER_*.xlsx` (from Script 6)
+
+**Output:** `MERGE_CLEAN_QC_MASTER_REVALIDATED_[timestamp].xlsx`
+
+**Features:**
+- Respects manual corrections (cells without yellow highlighting)
+- Updates QC_FLAG based on remaining issues
+- Converts dates to YYYY-MM-DD format
+- Excludes 4 special columns from validation
+- Iterative workflow support
+
+**📖 See [README_CONTINUOUS_WORKFLOW.md](README_CONTINUOUS_WORKFLOW.md) for complete step-by-step guide.**
+
+---
+
 ## Version History
+
+- **v1.1** (2025-11-24) - Continuous workflow update
+  - Script 6: Merge MASTER with new REVALIDATED runs
+  - Script 7: Revalidate merged MASTER
+  - Complete continuous workflow documentation
+  - CONTROL # continuity across cycles
+  - Enhanced manual QC support
 
 - **v1.0** (2025-11-14) - Initial release
   - Script 1: Merge multiple Excel sources
