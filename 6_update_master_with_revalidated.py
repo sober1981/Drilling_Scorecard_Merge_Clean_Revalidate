@@ -10,7 +10,7 @@ MERGE LOGIC:
 1. Duplicates are identified using THREE criteria (all must match):
    - JOB_NUM (Column D - must match exactly)
    - SN (Column AR - Serial Number must match exactly)
-   - DRILLING_HOURS (Column Z - must match exactly)
+   - DRILLING_HOURS (Column Z - ROUNDED to nearest integer for comparison)
 
 2. SOURCE preservation (Column A):
    - Motor_KPI rows in MASTER: NEVER modified
@@ -96,10 +96,10 @@ def create_run_key(row):
     Create a unique key for a run based on:
     - JOB_NUM (Column D)
     - SN (Column AR)
-    - DRILLING_HOURS (Column Z)
+    - DRILLING_HOURS (Column Z) - ROUNDED to nearest integer for comparison
 
     Returns:
-        Tuple (job_num, sn, drilling_hours) or None if key data is missing
+        Tuple (job_num, sn, drilling_hours_rounded) or None if key data is missing
     """
     job_num = row['JOB_NUM']
     sn = row['SN']
@@ -117,9 +117,10 @@ def create_run_key(row):
     job_num_str = str(job_num).strip()
     sn_str = str(sn).strip()
 
-    # Try to convert drilling_hours to float for comparison
+    # Try to convert drilling_hours to float, then ROUND to nearest integer for comparison
+    # This handles cases where MASTER has 12.345 and REVALIDATED has 12.35
     try:
-        drilling_hours_val = float(drilling_hours)
+        drilling_hours_val = round(float(drilling_hours))
     except (ValueError, TypeError):
         drilling_hours_val = 0
 
