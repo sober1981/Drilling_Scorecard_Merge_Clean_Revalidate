@@ -261,7 +261,7 @@ MERGE_CLEAN_QC_MASTER_REVALIDATED_[timestamp].xlsx
 Script 6 prevents duplicates using 3 criteria:
 - `JOB_NUM` (Column D)
 - `SN` (Column AR)
-- `DRILLING_HOURS` (Column Z)
+- `DRILLING_HOURS` (Column Z) - **ROUNDED to nearest integer** for comparison (handles decimal precision differences between files)
 
 ### 2. Source Priority Handling
 - **Motor_KPI** and **CAM_Run_Tracker** in MASTER are NEVER modified
@@ -359,6 +359,10 @@ python 7_revalidate_master.py
 ---
 
 ## Version History
+
+- **v1.1** (2025-11-25) - Improved duplicate detection
+  - Script 6: DRILLING_HOURS now rounded to nearest integer for duplicate comparison
+  - Fixes issue where decimal precision differences (e.g., 12.345 vs 12.35) caused false non-duplicates
 
 - **v1.0** (2025-11-24) - Initial continuous workflow with Scripts 6 and 7
   - Script 6: Merge MASTER with REVALIDATED

@@ -15,8 +15,8 @@ MERGE LOGIC:
 2. SOURCE preservation (Column A):
    - Motor_KPI rows in MASTER: NEVER modified
    - CAM_Run_Tracker rows in MASTER: NEVER modified
-   - POG_CAM_Usage rows in MASTER: NEVER modified (unless replaced by CAM_Run_Tracker)
-   - POG_MM_Usage rows in MASTER: NEVER modified
+   - POG_CAM_Usage rows in MASTER: Can be replaced by Motor_KPI or CAM_Run_Tracker
+   - POG_MM_Usage rows in MASTER: Can be replaced by Motor_KPI
 
 3. NEW DATA from REVALIDATED:
    - New Motor_KPI rows → Added to bottom
@@ -24,13 +24,21 @@ MERGE LOGIC:
    - New POG_CAM_Usage rows → Added to bottom (if not duplicates)
    - New POG_MM_Usage rows → Added to bottom (if not duplicates)
 
-4. SPECIAL REPLACEMENT RULE:
+4. SOURCE PRIORITY (Highest to Lowest):
+   - Motor_KPI (highest) - replaces POG_CAM_Usage and POG_MM_Usage
+   - CAM_Run_Tracker (highest) - replaces POG_CAM_Usage
+   - POG_CAM_Usage (lowest)
+   - POG_MM_Usage (lowest)
+
+5. SPECIAL REPLACEMENT RULES:
+   - If a Motor_KPI run in REVALIDATED matches a POG_CAM_Usage or POG_MM_Usage run in MASTER
+     (same JOB_NUM + SN + DRILLING_HOURS), the Motor_KPI version REPLACES the POG version.
    - If a CAM_Run_Tracker run in REVALIDATED matches a POG_CAM_Usage run in MASTER
      (same JOB_NUM + SN + DRILLING_HOURS), the CAM_Run_Tracker version REPLACES
      the POG_CAM_Usage version.
 
-5. OUTPUT ORDER:
-   - All original MASTER rows (except POG_CAM_Usage replaced by CAM_Run_Tracker)
+6. OUTPUT ORDER:
+   - All original MASTER rows (except POG rows replaced by higher priority sources)
    - New Motor_KPI rows from REVALIDATED
    - New CAM_Run_Tracker rows from REVALIDATED
    - New POG_CAM_Usage rows from REVALIDATED
@@ -243,9 +251,67 @@ def update_master_with_revalidated(master_file, revalidated_file):
     overlapping_keys = master_run_keys.intersection(revalidated_run_keys)
     print(f"  OVERLAPPING: {len(overlapping_keys)} run keys exist in both files")
 
-    # STEP 1: Handle CAM_Run_Tracker replacing POG_CAM_Usage
+    # STEP 1: Handle Motor_KPI replacing POG_CAM_Usage and POG_MM_Usage
     print("\n" + "-"*80)
-    print("STEP 1: CAM_Run_Tracker REPLACES POG_CAM_Usage")
+    print("STEP 1: Motor_KPI REPLACES POG_CAM_Usage and POG_MM_Usage")
+    print("-"*80)
+
+    # Find Motor_KPI rows in REVALIDATED
+    motor_kpi_revalidated = revalidated_df[revalidated_df['SOURCE'] == 'Motor_KPI'].copy()
+    motor_kpi_keys = set()
+    for idx, row in motor_kpi_revalidated.iterrows():
+        run_key = row['RUN_KEY']
+        if is_valid_run_key(run_key):
+            motor_kpi_keys.add(run_key)
+
+    print(f"\n  Motor_KPI in REVALIDATED: {len(motor_kpi_keys)} runs")
+
+    # Find POG_CAM_Usage rows in MASTER that match Motor_KPI keys
+    pog_cam_master = master_df[master_df['SOURCE'] == 'POG_CAM_Usage'].copy()
+    replaced_pog_cam_by_motor_keys = set()
+
+    for idx, row in pog_cam_master.iterrows():
+        run_key = row['RUN_KEY']
+        if is_valid_run_key(run_key) and run_key in motor_kpi_keys:
+            replaced_pog_cam_by_motor_keys.add(run_key)
+
+    print(f"  POG_CAM_Usage rows to be REPLACED by Motor_KPI: {len(replaced_pog_cam_by_motor_keys)}")
+
+    # Find POG_MM_Usage rows in MASTER that match Motor_KPI keys
+    pog_mm_master = master_df[master_df['SOURCE'] == 'POG_MM_Usage'].copy()
+    replaced_pog_mm_by_motor_keys = set()
+
+    for idx, row in pog_mm_master.iterrows():
+        run_key = row['RUN_KEY']
+        if is_valid_run_key(run_key) and run_key in motor_kpi_keys:
+            replaced_pog_mm_by_motor_keys.add(run_key)
+
+    print(f"  POG_MM_Usage rows to be REPLACED by Motor_KPI: {len(replaced_pog_mm_by_motor_keys)}")
+
+    if len(replaced_pog_cam_by_motor_keys) > 0 or len(replaced_pog_mm_by_motor_keys) > 0:
+        print(f"\n  REPLACEMENT DETAILS (Motor_KPI):")
+        for key in replaced_pog_cam_by_motor_keys:
+            job_num, sn, drilling_hours = key
+            sn_display = extract_last_digits(sn, SN_LAST_DIGITS)
+            print(f"    POG_CAM_Usage: JOB_NUM={job_num}, SN (last 3)={sn_display}, DRILLING_HOURS={drilling_hours:.1f}")
+        for key in replaced_pog_mm_by_motor_keys:
+            job_num, sn, drilling_hours = key
+            sn_display = extract_last_digits(sn, SN_LAST_DIGITS)
+            print(f"    POG_MM_Usage: JOB_NUM={job_num}, SN (last 3)={sn_display}, DRILLING_HOURS={drilling_hours:.1f}")
+
+    # Remove POG rows from MASTER that will be replaced by Motor_KPI
+    master_filtered_df = master_df[~(
+        ((master_df['SOURCE'] == 'POG_CAM_Usage') &
+         (master_df['RUN_KEY'].apply(lambda k: is_valid_run_key(k) and k in replaced_pog_cam_by_motor_keys))) |
+        ((master_df['SOURCE'] == 'POG_MM_Usage') &
+         (master_df['RUN_KEY'].apply(lambda k: is_valid_run_key(k) and k in replaced_pog_mm_by_motor_keys)))
+    )].copy()
+
+    print(f"\n  MASTER after Motor_KPI replacements: {len(master_filtered_df)} rows")
+
+    # STEP 2: Handle CAM_Run_Tracker replacing POG_CAM_Usage
+    print("\n" + "-"*80)
+    print("STEP 2: CAM_Run_Tracker REPLACES POG_CAM_Usage")
     print("-"*80)
 
     # Find CAM_Run_Tracker rows in REVALIDATED
@@ -258,38 +324,39 @@ def update_master_with_revalidated(master_file, revalidated_file):
 
     print(f"\n  CAM_Run_Tracker in REVALIDATED: {len(cam_tracker_keys)} runs")
 
-    # Find POG_CAM_Usage rows in MASTER that match CAM_Run_Tracker keys
-    pog_cam_master = master_df[master_df['SOURCE'] == 'POG_CAM_Usage'].copy()
-    replaced_pog_cam_keys = set()
+    # Find POG_CAM_Usage rows in filtered MASTER that match CAM_Run_Tracker keys
+    # (using master_filtered_df which already has Motor_KPI replacements applied)
+    pog_cam_filtered = master_filtered_df[master_filtered_df['SOURCE'] == 'POG_CAM_Usage'].copy()
+    replaced_pog_cam_by_cam_keys = set()
 
-    for idx, row in pog_cam_master.iterrows():
+    for idx, row in pog_cam_filtered.iterrows():
         run_key = row['RUN_KEY']
         if is_valid_run_key(run_key) and run_key in cam_tracker_keys:
-            replaced_pog_cam_keys.add(run_key)
+            replaced_pog_cam_by_cam_keys.add(run_key)
 
-    print(f"  POG_CAM_Usage rows to be REPLACED: {len(replaced_pog_cam_keys)}")
+    print(f"  POG_CAM_Usage rows to be REPLACED by CAM_Run_Tracker: {len(replaced_pog_cam_by_cam_keys)}")
 
-    if len(replaced_pog_cam_keys) > 0:
-        print(f"\n  REPLACEMENT DETAILS:")
-        for key in replaced_pog_cam_keys:
+    if len(replaced_pog_cam_by_cam_keys) > 0:
+        print(f"\n  REPLACEMENT DETAILS (CAM_Run_Tracker):")
+        for key in replaced_pog_cam_by_cam_keys:
             job_num, sn, drilling_hours = key
             sn_display = extract_last_digits(sn, SN_LAST_DIGITS)
             print(f"    JOB_NUM={job_num}, SN (last 3)={sn_display}, DRILLING_HOURS={drilling_hours:.1f}")
 
-    # Remove POG_CAM_Usage rows from MASTER that will be replaced
-    master_filtered_df = master_df[~(
-        (master_df['SOURCE'] == 'POG_CAM_Usage') &
-        (master_df['RUN_KEY'].apply(lambda k: is_valid_run_key(k) and k in replaced_pog_cam_keys))
+    # Remove POG_CAM_Usage rows from filtered MASTER that will be replaced by CAM_Run_Tracker
+    master_filtered_df = master_filtered_df[~(
+        (master_filtered_df['SOURCE'] == 'POG_CAM_Usage') &
+        (master_filtered_df['RUN_KEY'].apply(lambda k: is_valid_run_key(k) and k in replaced_pog_cam_by_cam_keys))
     )].copy()
 
-    print(f"\n  MASTER after POG_CAM_Usage removal: {len(master_filtered_df)} rows")
+    print(f"\n  MASTER after CAM_Run_Tracker replacements: {len(master_filtered_df)} rows")
 
-    # STEP 2: Identify NEW runs from REVALIDATED
+    # STEP 3: Identify NEW runs from REVALIDATED
     print("\n" + "-"*80)
-    print("STEP 2: IDENTIFY NEW RUNS FROM REVALIDATED")
+    print("STEP 3: IDENTIFY NEW RUNS FROM REVALIDATED")
     print("-"*80)
 
-    # Update master_run_keys after POG_CAM_Usage removal
+    # Update master_run_keys after all POG replacements
     master_run_keys_updated = set()
     for idx, row in master_filtered_df.iterrows():
         run_key = row['RUN_KEY']
@@ -317,12 +384,12 @@ def update_master_with_revalidated(master_file, revalidated_file):
         count = len(new_runs_by_source[source])
         print(f"    {source}: {count} new runs")
 
-    # STEP 3: Assemble the final DataFrame
+    # STEP 4: Assemble the final DataFrame
     print("\n" + "-"*80)
-    print("STEP 3: ASSEMBLE FINAL OUTPUT")
+    print("STEP 4: ASSEMBLE FINAL OUTPUT")
     print("-"*80)
 
-    # Start with filtered MASTER (POG_CAM_Usage replaced rows removed)
+    # Start with filtered MASTER (POG rows replaced by higher priority sources removed)
     output_rows = [master_filtered_df]
 
     # Add new runs in order: Motor_KPI, CAM_Run_Tracker, POG_CAM_Usage, POG_MM_Usage
@@ -460,8 +527,11 @@ def update_master_with_revalidated(master_file, revalidated_file):
     print(f"\nINPUT FILES:")
     print(f"  MASTER: {master_file} ({len(master_df)} rows)")
     print(f"  REVALIDATED: {revalidated_file} ({len(revalidated_df)} rows)")
-    print(f"\nOPERATIONS:")
-    print(f"  POG_CAM_Usage rows REPLACED by CAM_Run_Tracker: {len(replaced_pog_cam_keys)}")
+    print(f"\nREPLACEMENTS (higher priority sources replace lower priority):")
+    print(f"  POG_CAM_Usage rows REPLACED by Motor_KPI: {len(replaced_pog_cam_by_motor_keys)}")
+    print(f"  POG_MM_Usage rows REPLACED by Motor_KPI: {len(replaced_pog_mm_by_motor_keys)}")
+    print(f"  POG_CAM_Usage rows REPLACED by CAM_Run_Tracker: {len(replaced_pog_cam_by_cam_keys)}")
+    print(f"\nNEW RUNS ADDED:")
     print(f"  Motor_KPI rows ADDED: {len(new_runs_by_source['Motor_KPI'])}")
     print(f"  CAM_Run_Tracker rows ADDED: {len(new_runs_by_source['CAM_Run_Tracker'])}")
     print(f"  POG_CAM_Usage rows ADDED: {len(new_runs_by_source['POG_CAM_Usage'])}")
